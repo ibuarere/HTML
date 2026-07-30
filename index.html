@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>動画からMP3音声抽出ツール</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      max-width: 500px;
+      margin: 30px auto;
+      padding: 20px;
+      text-align: center;
+      background-color: #f9f9f9;
+      border-radius: 12px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    }
+    h2 { color: #333; }
+    input[type="file"] { margin: 20px 0; }
+    .input-group {
+      margin: 15px 0;
+    }
+    .input-group label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+      color: #555;
+    }
+    input[type="text"] {
+      width: 80%;
+      padding: 10px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      box-sizing: border-box;
+    }
+    button {
+      background-color: #007aff;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      font-size: 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    button:disabled { background-color: #ccc; }
+    #status { margin-top: 15px; font-weight: bold; color: #555; }
+    #progressText {
+      font-size: 24px;
+      font-weight: bold;
+      color: #007aff;
+      margin-top: 10px;
+    }
+    #downloadArea { margin-top: 20px; }
+    a.downloadBtn {
+      display: inline-block;
+      padding: 12px 24px;
+      background-color: #34c759;
+      color: white;
+      text-decoration: none;
+      border-radius: 8px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>動画 → MP3 抽出</h2>
+  <p>iPhoneの動画ファイル（.mov / .mp4）を選択してください</p>
+
+  <input type="file" id="videoInput" accept="video/*">
+  
+  <div class="input-group">
+    <label for="fileNameInput">保存するファイル名:</label>
+    <input type="text" id="fileNameInput" placeholder="my_audio" value="my_audio"> .mp3
+  </div>
+
+  <button id="convertBtn" onclick="processVideo()" disabled>MP3に変換</button>
+
+  <div id="status"></div>
+  <div id="progressText"></div>
+  <div id="downloadArea"></div>
+
+  <script>
+    const videoInput = document.getElementById('videoInput');
+    const fileNameInput = document.getElementById('fileNameInput');
+    const convertBtn = document.getElementById('convertBtn');
+    const status = document.getElementById('status');
+    const progressText = document.getElementById('progressText');
+    const downloadArea = document.getElementById('downloadArea');
+
+    videoInput.addEventListener('change', () => {
+      if (videoInput.files.length > 0) {
+        convertBtn.disabled = false;
+        status.innerText = "";
+        progressText.innerText = "";
+        downloadArea.innerHTML = "";
+      }
+    });
+
+    async function processVideo() {
+      const file = videoInput.files[0];
+      if (!file) return;
+
+      // ファイル名の取得と整理（空欄の場合はデフォルト名、末尾に.mp3がなければ自動補正）
+      let customFileName = fileNameInput.value.trim();
+      if (!customFileName) {
+        customFileName = "extracted_audio";
+      }
+      if (!customFileName.endsWith('.mp3')) {
+        customFileName += '.mp3';
+      }
+
+      convertBtn.disabled = true;
+      status.innerText = "動画データを読み込み中...";
+      progressText.innerText = "";
+      downloadArea.innerHTML = "";
+
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        status.innerText = "データを解析中（音声のデコード）...";
+
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+        status.innerText = "MP3へ変換中...";
+
+        const channels = audioBuffer.numberOfChannels;
+        const sampleRate = audioBuffer.sampleRate;
+        const samplesL = audioBuffer.getChannelData(0);
+        const samplesR = channels > 1 ? audioBuffer.getChannelData(1) : samplesL;
+
+        const workerCode = `
+          importScripts('https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.min.js');
+
+          self.onmessage = function(e) {
+            const { channels, sampleRate, samplesL, samplesR } = e.data;
+            const mp3encoder = new lamejs.Mp3Encoder(channels, sampleRate, 128);
+            const mp3Data = [];
+            const sampleBlockSize = 1152;
+            const length = samplesL.length;
+
+            for (let i = 0; i < length; i += sampleBlockSize) {
+              const leftChunk = new Int16Array(Math.min(sampleBlockSize, length - i));
+              const rightChunk = new Int16Array(Math.min(sampleBlockSize, length - i));
+
+              for (let j = 0; j < leftChunk.length; j++) {
+                leftChunk[j] = Math.max(-32768, Math.min(32767, samplesL[i + j] * 32767));
+                rightChunk[j] = Math.max(-32768, Math.min(32767, samplesR[i + j] * 32767));
+              }
+
+              let mp3buf;
+              if (channels === 1) {
+                mp3buf = mp3encoder.encodeBuffer(leftChunk);
+              } else {
+                mp3buf = mp3encoder.encodeBuffer(leftChunk, rightChunk);
+              }
+
+              if (mp3buf.length > 0) {
+                mp3Data.push(mp3buf);
+              }
+
+              const percent = Math.floor((i / length) * 100);
+              self.postMessage({ type: 'progress', percent: percent });
+            }
+
+            const endBuf = mp3encoder.flush();
+            if (endBuf.length > 0) {
+              mp3Data.push(endBuf);
+            }
+
+            self.postMessage({ type: 'complete', mp3Data: mp3Data });
+          };
+        `;
+
+        const blob = new Blob([workerCode], { type: 'application/javascript' });
+        const worker = new Worker(URL.createObjectURL(blob));
+
+        worker.postMessage({
+          channels: channels,
+          sampleRate: sampleRate,
+          samplesL: samplesL,
+          samplesR: samplesR
+        });
+
+        worker.onmessage = function(e) {
+          if (e.data.type === 'progress') {
+            progressText.innerText = e.data.percent + " %";
+          } else if (e.data.type === 'complete') {
+            progressText.innerText = "100 %";
+            status.innerText = "変換が完了しました！";
+
+            const mp3Blob = new Blob(e.data.mp3Data, { type: 'audio/mp3' });
+            const url = URL.createObjectURL(mp3Blob);
+
+            downloadArea.innerHTML = `<a class="downloadBtn" href="${url}" download="${customFileName}">${customFileName} をダウンロード</a>`;
+            convertBtn.disabled = false;
+            worker.terminate();
+          }
+        };
+
+      } catch (err) {
+        console.error(err);
+        status.innerText = "エラーが発生しました。動画形式を確認してください。";
+        progressText.innerText = "";
+        convertBtn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
