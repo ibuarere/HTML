@@ -674,6 +674,13 @@ button { background-color: #ff3b30; }"></textarea>
         <button onclick="showAdminTab('block')">ユーザー管理</button>
         <button onclick="showAdminTab('edit')" class="btn-secondary">HTML編集</button>
         <button onclick="showAdminTab('news')" class="btn-secondary">ニュース投稿</button>
+        <button onclick="showAdminTab('comments')" class="btn-secondary">コメント管理</button>
+      </div>
+
+      <div id="admin-tab-comments" style="display: none;">
+        <h3>コメント管理</h3>
+        <p style="font-size:13px;color:#666;margin-bottom:12px;">問題のあるコメントだけを選んで削除できます。削除は取り消せません。</p>
+        <div id="admin-comment-list"></div>
       </div>
 
       <div id="admin-tab-block">
@@ -1702,6 +1709,65 @@ button { background: linear-gradient(90deg,#ff00a8,#7b2cff,#00c8ff) !important; 
     document.getElementById('admin-tab-block').style.display = tab === 'block' ? 'block' : 'none';
     document.getElementById('admin-tab-edit').style.display = tab === 'edit' ? 'block' : 'none';
     document.getElementById('admin-tab-news').style.display = tab === 'news' ? 'block' : 'none';
+    document.getElementById('admin-tab-comments').style.display = tab === 'comments' ? 'block' : 'none';
+    if (tab === 'comments') renderAdminComments();
+  };
+
+  function renderAdminComments() {
+    const listEl = document.getElementById('admin-comment-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    const entries = [];
+    htmlList.forEach(post => {
+      const comments = Array.isArray(post.comments) ? post.comments : [];
+      comments.forEach((comment, index) => entries.push({ post, comment, index }));
+    });
+
+    if (!entries.length) {
+      listEl.innerHTML = '<p style="text-align:center;color:#888;padding:20px;">コメントはまだありません。</p>';
+      return;
+    }
+
+    entries.sort((a, b) => (Number(b.comment.createdAt) || 0) - (Number(a.comment.createdAt) || 0));
+    entries.forEach(({ post, comment, index }) => {
+      const card = document.createElement('div');
+      card.className = 'user-card-item';
+      const date = comment.createdAt ? new Date(comment.createdAt).toLocaleString('ja-JP') : '日時不明';
+      card.innerHTML = `
+        <div class="user-info-row"><strong>投稿：</strong>${escapeHtml(post.title || '無題')}</div>
+        <div class="user-info-row"><strong>投稿者：</strong>${escapeHtml(comment.author || 'ユーザー')}</div>
+        <div class="user-info-row" style="white-space:pre-wrap;overflow-wrap:anywhere;"><strong>コメント：</strong>${escapeHtml(comment.text || '')}</div>
+        <div class="user-info-row" style="font-size:12px;color:#888;">${escapeHtml(date)}</div>
+        <button class="btn-danger" onclick="deletePostComment('${post.docId}', ${index})">このコメントを削除</button>
+      `;
+      listEl.appendChild(card);
+    });
+  }
+
+  window.deletePostComment = async function(postId, commentIndex) {
+    const post = htmlList.find(item => item.docId === postId);
+    if (!post || !Array.isArray(post.comments) || !post.comments[commentIndex]) {
+      alert('コメントが見つかりません。画面を更新してください。');
+      return;
+    }
+    const target = post.comments[commentIndex];
+    const preview = String(target.text || '').slice(0, 80);
+    if (!confirm(`次のコメントを削除しますか？\n投稿者：${target.author || 'ユーザー'}\nコメント：${preview}${String(target.text || '').length > 80 ? '…' : ''}`)) return;
+
+    const comments = [...post.comments];
+    comments.splice(commentIndex, 1);
+    try {
+      await updateDoc(doc(db, 'posts', postId), { comments });
+      // Firestoreの監視更新を待つ間も管理画面に古いコメントを残さない
+      post.comments = comments;
+      renderAdminComments();
+      if (activeSocialPostId === postId) renderPostSocial(post);
+      renderHome();
+      alert('コメントを削除しました。');
+    } catch (error) {
+      console.error('コメント削除エラー:', error);
+      alert('コメントを削除できませんでした。通信状態とFirestoreのセキュリティルールを確認してください。');
+    }
   };
 
   function renderAdminLists() {
@@ -1770,6 +1836,7 @@ button { background: linear-gradient(90deg,#ff00a8,#7b2cff,#00c8ff) !important; 
         });
       }
     }
+    renderAdminComments();
   }
 
   window.setBlockTime = async function(docId, userId) {
