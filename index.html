@@ -567,9 +567,14 @@
       <label style="font-size: 13px; font-weight: bold;">3. コード直接入力（任意）</label>
       <textarea id="html-code-input" placeholder="<iframe src='https://www.youtube.com/embed/...'></iframe>"></textarea>
 
-      <label style="font-size: 13px; font-weight: bold;">4. 閲覧・ダウンロード用パスワード（任意）</label>
+      <label style="font-size: 13px; font-weight: bold;">4. パスワード（任意）</label>
       <input type="password" id="html-password-input" placeholder="設定しない場合は空欄">
-      <p style="font-size: 11px; color: #666; margin: -6px 0 12px;">設定すると、HTMLを開くときと保存するときにパスワードが必要になります。</p>
+      <label for="html-password-mode" style="font-size: 13px; font-weight: bold;">パスワードが必要な操作</label>
+      <select id="html-password-mode">
+        <option value="both">閲覧・保存するとき</option>
+        <option value="saveOnly">保存するときのみ（閲覧は自由）</option>
+      </select>
+      <p style="font-size: 11px; color: #666; margin: -6px 0 12px;">パスワードを空欄にすると、どちらの設定でもパスワードは不要です。</p>
 
       <button id="post-submit-btn" onclick="addHtmlContent()">追加・投稿する</button>
       <button id="post-cancel-edit-btn" onclick="cancelEditHtml()" class="btn-secondary" style="display: none;">編集をキャンセル</button>
@@ -1150,6 +1155,8 @@ button { background: linear-gradient(90deg,#ff00a8,#7b2cff,#00c8ff) !important; 
 
   function verifyHtmlPassword(item, actionLabel) {
     if (!item || !item.password) return true;
+    // 「保存するときのみ」を選んだ投稿は、閲覧時のパスワード確認を省略する。
+    if (item.passwordMode === 'saveOnly' && actionLabel === '閲覧') return true;
     const entered = prompt(`「${item.title}」の${actionLabel}にはパスワードが必要です：`);
     if (entered === null) return false;
     if (entered !== item.password) {
@@ -1314,6 +1321,8 @@ button { background: linear-gradient(90deg,#ff00a8,#7b2cff,#00c8ff) !important; 
       return (!search || haystack.includes(search)) && (!category || (item.category || '') === category);
     });
     filtered.sort((a,b) => {
+      // お気に入りは、選択中の並び順にかかわらず常に上部へ表示する。
+      if (!!a.isFavorite !== !!b.isFavorite) return a.isFavorite ? -1 : 1;
       if (sort === 'oldest') return postTimeValue(a)-postTimeValue(b);
       if (sort === 'likes') {
         const countLikes = item => Array.isArray(item.likes) ? item.likes.length : 0;
@@ -1431,6 +1440,7 @@ button { background: linear-gradient(90deg,#ff00a8,#7b2cff,#00c8ff) !important; 
     const title = titleInput.value.trim() || (fileInput.files[0] ? fileInput.files[0].name : '無題のHTML');
     const content = codeInput.value.trim();
     const password = document.getElementById('html-password-input').value;
+    const passwordMode = document.getElementById('html-password-mode').value || 'both';
     const category = document.getElementById('html-category-input').value.trim();
     const tags = document.getElementById('html-tags-input').value.split(',').map(t=>t.trim()).filter(Boolean);
 
@@ -1444,6 +1454,7 @@ button { background: linear-gradient(90deg,#ff00a8,#7b2cff,#00c8ff) !important; 
         title: title,
         content: content,
         password: password,
+        passwordMode: passwordMode,
         category: category,
         tags: tags,
         updatedAt: Date.now()
@@ -1455,6 +1466,7 @@ button { background: linear-gradient(90deg,#ff00a8,#7b2cff,#00c8ff) !important; 
         title: title,
         content: content,
         password: password,
+        passwordMode: passwordMode,
         category: category,
         tags: tags,
         likes: [],
@@ -1467,6 +1479,7 @@ button { background: linear-gradient(90deg,#ff00a8,#7b2cff,#00c8ff) !important; 
       titleInput.value = '';
       codeInput.value = '';
       document.getElementById('html-password-input').value = '';
+      document.getElementById('html-password-mode').value = 'both';
       document.getElementById('html-category-input').value = '';
       document.getElementById('html-tags-input').value = '';
       fileInput.value = '';
@@ -1483,6 +1496,7 @@ button { background: linear-gradient(90deg,#ff00a8,#7b2cff,#00c8ff) !important; 
     document.getElementById('html-title-input').value = item.title;
     document.getElementById('html-code-input').value = item.content;
     document.getElementById('html-password-input').value = item.password || '';
+    document.getElementById('html-password-mode').value = item.passwordMode || 'both';
     document.getElementById('html-category-input').value = item.category || '';
     document.getElementById('html-tags-input').value = (item.tags || []).join(', ');
 
@@ -1498,6 +1512,7 @@ button { background: linear-gradient(90deg,#ff00a8,#7b2cff,#00c8ff) !important; 
     document.getElementById('html-title-input').value = '';
     document.getElementById('html-code-input').value = '';
     document.getElementById('html-password-input').value = '';
+    document.getElementById('html-password-mode').value = 'both';
     document.getElementById('html-file-input').value = '';
 
     document.getElementById('post-form-title-label').textContent = '1. 表示タイトル';
